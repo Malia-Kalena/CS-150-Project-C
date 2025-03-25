@@ -13,13 +13,12 @@ The analysis utilizes three datasets that detail various economic metrics over t
 
 These datasets were chosen because they provide a clear picture of economic trends affecting cost of living. Analyzing them together allows for exploration of the relationships between income, housing, and employment.
 
-### Data Sources
-- Federal Reserve Economic Data (FRED)
-
 ### Data Source
-- Data set was provided from the Environmental Protection Agency (EPA), which focuses on the air quality measurements in Hawaii.
-- Key variable: PM2.5 concentrations (μg/m<sup>3</sup>)
-- Timeframe: will include data from July to August to assess the changes before, during, and after the Lahaina fire.
+**Federal Reserve Economic Data (FRED)**
+- Real Median Household Income in New York (MEHOINUSNYA672N)
+- Housing Inventory: Median Listing Price in New York (MEDLISPRINY)
+- Unemployment Rate in New York (NYUR)
+
 
 ### Strategies from "Storytelling With Data"
 - **Clarity and simplicity:** Using clear labels and concise axes to avoid confustion and keeping visualization simple to avoid unnecesary distractions.
