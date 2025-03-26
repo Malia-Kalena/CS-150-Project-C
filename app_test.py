@@ -16,6 +16,7 @@ app = Dash(
 df_income = pd.read_csv("assets/real-median-household-income-NY.csv")
 df_housing = pd.read_csv("assets/median-listing-price-NY.csv")
 df_unemployment = pd.read_csv("assets/unemployment-rate-NY.csv")
+df_gas_price = pd.read_csv("assets/Gasoline_Retail_Prices_Weekly_Average_by_Region__Beginning_2007.csv")
 
 # change 'observation_date' column to 'Year'
 df_income['Year'] = pd.to_datetime(df_income['observation_date']).dt.year
@@ -27,6 +28,14 @@ df_income = df_income.drop(columns=['observation_date'])
 df_housing = df_housing.drop(columns=['observation_date'])
 df_unemployment = df_unemployment.drop(columns=['observation_date'])
 
+# cleaning gas price data
+df_gas_price["Date"] = pd.to_datetime(df_gas_price["Date"])
+df_gas_price["Year"] = df_gas_price["Date"].dt.year
+df_yearly_avg_gas_price = df_gas_price.groupby("Year")["New York State Average ($/gal)"].mean().reset_index()
+df_yearly_avg_gas_price = df_yearly_avg_gas_price.rename(columns={"New York State Average ($/gal)": "Average Gas Price"})
+df_yearly_avg_gas_price["Average Gas Price"] = df_yearly_avg_gas_price["Average Gas Price"].round(2)
+
+
 # rename other info columns
 df_income = df_income.rename(columns={"MEHOINUSNYA672N": "Median Household Income"})
 df_housing = df_housing.rename(columns={"MEDLISPRINY": "Median Housing Price"})
@@ -34,18 +43,18 @@ df_unemployment = df_unemployment.rename(columns={"NYUR": "Unemployment Rate"})
 
 # merge all 3 dataframes + drop NaN values
 merged_df = df_income.merge(df_housing, on='Year', how='outer') \
-                     .merge(df_unemployment, on='Year', how='outer')
+                     .merge(df_unemployment, on='Year', how='outer') \
+                     .merge(df_yearly_avg_gas_price, on='Year', how='outer')
 df = merged_df.dropna()
-
 
 MIN_YR = df['Year'].min()
 MAX_YR = df['Year'].max()
 
 COLORS = {
-    "income": "#3cb521",
-    "housing": "#fd7e14",
-    "unemployment": "#446e9b",
-    "inflation": "#cd0200",
+    "Median Household Income": "#3cb521",
+    "Median Housing Price": "#fd7e14",
+    "Unemployment Rate": "#446e9b",
+    "Average Gas Price" : "#fcba03",
     "background": "whitesmoke",
 }
 
@@ -56,20 +65,12 @@ COLORS = {
 Markdown Text
 """
 
-datasource_text = dcc.Markdown(
-    """
-    [Data source:](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html)
-    Historical Returns on Stocks, Bonds and Bills from NYU Stern School of
-    Business
-    """
-)
-
 asset_allocation_text = dcc.Markdown(
     """
 > Explore how changes in the cost of living and housing market dynamics affect household income over time. 
 
 > Adjust the year range and compare trends in median household income, unemployment rates, and housing prices.
-  Select two years to see how these key factors evolve between them.
+  Select an indicator to see how it evolves between the years.
     """
 )
 
@@ -91,46 +92,83 @@ footer = html.Div(
 
 """
 ==========================================================================
+Tables
+"""
+results_table = dash_table.DataTable(
+    id="results_table",
+    columns=[
+        {"name": "Year", "id": "Year", "type": "numeric"},
+        {"name": "Change", "id": "Change", "type": "text"},
+        {"name": "Median Household Income", "id": "Median Household Income", "type": "numeric", "format": {"specifier": "$,.0f"}},
+        {"name": "Unemployment Rate", "id": "Unemployment Rate", "type": "numeric", "format": {"specifier": ".1f"}},
+        {"name": "Median Housing Price", "id": "Median Housing Price", "type": "numeric", "format": {"specifier": "$,.0f"}},
+        {"name": "Average Gas Price", "id": "Average Gas Price", "type": "numeric", "format": {"specifier": "$,.2f"}},
+    ],
+    page_size=15,
+    data=df.to_dict("records"),
+    style_table={"height": "300px", "overflowY": "auto"},
+    style_header={
+        'whiteSpace': 'normal',
+        'height': 'auto',
+        'lineHeight': '1.5',
+        'textAlign': 'center',
+    },
+)
+
+
+
+"""
+==========================================================================
 Figures
 """
 
-def make_line_chart_unemployment(dff):
-    start = int(dff.iloc[1]["Year"])  # start year
+def make_line_chart(dff, selected_indicator):
+    start = int(dff.iloc[0]["Year"])  # start year
     end = int(dff.iloc[-1]["Year"])  # end year
     yrs = len(dff["Year"]) - 1
     dtick = 1 if yrs < 16 else 2 if yrs in range(16, 30) else 5
 
     fig = go.Figure()
 
-    dff["Unemployment Rate"] = dff["Unemployment Rate"]
+    dff = dff.copy()
 
     fig.add_trace(
         go.Scatter(
             x=dff["Year"],
             y=dff["Median Household Income"],
             name="Median Household Income",
-            marker_color=COLORS["income"],
+            marker_color=COLORS["Median Household Income"],
             yaxis="y",
         )
     )
+
     fig.add_trace(
         go.Scatter(
             x=dff["Year"],
-            y=dff["Unemployment Rate"],
-            name="Unemployment Rate",
-            marker_color=COLORS["unemployment"],
+            y=dff[selected_indicator],
+            name=selected_indicator,
+            marker_color=COLORS.get(selected_indicator),
             yaxis="y2",
             hoverlabel=dict(
-                bgcolor="white",  # Background color for the hover label
-                font_size=12,  # Font size for hover text
-                font_family="Arial",  # Font family for hover text
-                align="left",  # Align the hover text to the left
-                namelength=-1  # Prevent truncation of the name (no max length)
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial",
+                align="left",
+                namelength=-1
             )
         )
     )
+
+    indicator_ranges = {
+        "Median Housing Price": {"yaxis2": {"range": [350000, 650000], "tickprefix": "$"}},
+        "Unemployment Rate": {"yaxis2": {"range": [3.0, 9.0], "ticksuffix": "%", "tickformat": ".1f"}},
+        "Average Gas Price": {"yaxis2": {"range": [2.00, 4.50], "tickprefix": "$", "tickformat": ".2f"}},
+    }
+
+    indicator_range = indicator_ranges[selected_indicator]
+
     fig.update_layout(
-        title=f"Median Household Income vs. Unemployment Rate Trends ({start} - {end})",
+        title=f"Median Household Income vs. {selected_indicator} Trends ({start} - {end})",
         template="none",
         showlegend=True,
         legend=dict(
@@ -145,24 +183,26 @@ def make_line_chart_unemployment(dff):
         yaxis=dict(
             title="Median Household Income ($)",
             tickprefix="$",
-            fixedrange=True,
+            range=[75000, 87000],
             title_standoff=10,
         ),
         hoverlabel=dict(
-            bgcolor="white",  # Background color for the hover label
-            font_size=12,  # Font size for hover text
-            font_family="Arial",  # Font family for hover text
-            align="left",  # Align the hover text to the left
-            namelength=-1  # Prevent truncation of the name (no max length)
+            bgcolor="white",
+            font_size=12,
+            font_family="Arial",
+            align="left",
+            namelength=-1
         ),
         yaxis2=dict(
-            title="Unemployment Rate (%)",
+            title=f"{selected_indicator}",
             overlaying="y",
             side="right",
-            range=[0, 15],
             fixedrange=True,
-            ticksuffix="%",
             title_standoff=15,
+            range=indicator_range['yaxis2']['range'],
+            tickprefix=indicator_range['yaxis2'].get('tickprefix', ''),
+            ticksuffix=indicator_range['yaxis2'].get('ticksuffix', ''),
+            tickformat = indicator_range['yaxis2'].get('tickformat', ''),
         ),
         xaxis=dict(title="Years", fixedrange=True, dtick=dtick),
     )
@@ -170,142 +210,65 @@ def make_line_chart_unemployment(dff):
     return fig
 
 
-def make_line_chart_housing(dff):
-   start = int(dff.iloc[1]["Year"])
-   end = int(dff.iloc[-1]["Year"])
-   yrs = len(dff["Year"]) - 1
-   dtick = 1 if yrs < 16 else 2 if yrs in range(16, 30) else 5
+def make_bar_graph(dff, selected_indicator, year_range):
+    start_year = year_range[0]
+    end_year = year_range[1]
 
+    df_start = dff[dff["Year"] == start_year]
+    df_end = dff[dff["Year"] == end_year]
 
-   fig = go.Figure()
+    indicator_start = df_start[selected_indicator].iloc[0] if not df_start.empty else None
+    indicator_end = df_end[selected_indicator].iloc[0] if not df_end.empty else None
 
+    fig = go.Figure(
+        go.Bar(
+            x=[f"{start_year}", f"{end_year}"],
+            y=[indicator_start, indicator_end],
+            name=f"{selected_indicator}",
+            marker_color=COLORS.get(selected_indicator),
+        )
+    )
 
-   fig.add_trace(
-       go.Scatter(
-           x=dff["Year"],
-           y=dff["Median Household Income"],
-           name="Median Household Income",
-           marker_color=COLORS["income"],
-           hoverlabel=dict(
-               bgcolor="white",  # Background color for the hover label
-               font_size=12,  # Font size for hover text
-               font_family="Arial",  # Font family for hover text
-               align="left",  # Align the hover text to the left
-               namelength=-1  # Prevent truncation of the name (no max length)
-           )
-       ),
-   )
-   fig.add_trace(
-       go.Scatter(
-           x=dff["Year"],
-           y=dff["Median Housing Price"],
-           name="Median Housing Price",
-           marker_color=COLORS["housing"],
-           yaxis="y2",
-       ),
-   )
-   fig.update_layout(
-       title=dict(
-           text=f"Median Household Income and Median Housing Price ({start} - {end})"
-             "<br><span style='font-size: 12px; color:gray;'>"
-             "Note: The y-axes are independent and do not imply a direct correlation.</span>",
-           x=0.5,  # Centers the title
-           y=0.95,  # Positions title slightly lower to fit subtitle
-           xanchor="center",
-           yanchor="top",
-       ),
-       template="none",
-       showlegend=True,
-       legend=dict(
-           x=0.5,
-           y=1.1,
-           xanchor="right",
-           yanchor="top",
-           orientation="h",
-       ),
-       height=400,
-       margin=dict(l=80, r=90, t=80, b=55),
-       xaxis=dict(title="Years", fixedrange=True, dtick=dtick, linecolor="black"),
+    indicator_ranges = {
+        "Median Housing Price": {"yaxis": {"range": [0, 650000], "tickprefix": "$"}},
+        "Unemployment Rate": {"yaxis": {"range": [0.0, 9.0], "ticksuffix": "%"}},
+        "Average Gas Price": {"yaxis": {"range": [0.00, 5.00], "tickprefix": "$", "tickformat": ".2f"}},
+    }
 
+    indicator_range = indicator_ranges[selected_indicator]
 
-       yaxis=dict(
-           title="Median Household Income ($)",
-           tickprefix="$",
-           side="left",
-           fixedrange=True,
-           title_standoff=10,
-       ),
+    fig.update_layout(
+        title=f"{selected_indicator} at {start_year} vs. {end_year}",
+        template="none",
+        showlegend=True,
+        legend=dict(
+            x=0.5,
+            y=1.1,
+            xanchor="center",
+            yanchor="top",
+            orientation="h",
+        ),
+        height=400,
+        margin=dict(l=80, r=90, t=80, b=55),
+        xaxis=dict(
+            title="Year",
+            tickvals=[start_year, end_year],
+        ),
+        yaxis=dict(
+            title=selected_indicator,
+            range = indicator_range['yaxis']['range'],
+            tickprefix = indicator_range['yaxis'].get('tickprefix', ''),
+            ticksuffix = indicator_range['yaxis'].get('ticksuffix', ''),
+            tickformat = indicator_range['yaxis'].get('tickformat', ''),
+        ),
+        bargap=0.45,
+        plot_bgcolor=COLORS["background"],
 
+    )
 
-       hoverlabel=dict(
-           bgcolor="white",  # Background color for the hover label
-           font_size=12,  # Font size for hover text
-           font_family="Arial",  # Font family for hover text
-           align="left",  # Align the hover text to the left
-           namelength=-1  # Prevent truncation of the name (no max length)
-       ),
-
-
-       yaxis2=dict(
-           title="Median Housing Price ($)",
-           tickprefix="$",
-           overlaying="y",
-           side="right",
-           fixedrange=True,
-           title_standoff = 15,
-       ),
-   )
-   return fig
-
-
-def make_slope_chart_unemployment(dff, year_1, year_2):
-    # Filter data for the two selected years
-    unemployment_1 = dff[dff["Year"] == year_1]["Unemployment Rate"].values[0]
-    unemployment_2 = dff[dff["Year"] == year_2]["Unemployment Rate"].values[0]
-
-    # Create a slope graph (just two points with a line)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[year_1, year_2],
-                             y=[unemployment_1, unemployment_2],
-                             mode='lines+markers+text',
-                             text=[f"{year_1}: {unemployment_1}", f"{year_2}: {unemployment_2}"],
-                             line=dict(color='blue', width=3),
-                             marker=dict(size=10, color='blue'),
-                             textposition="top center"))
-    fig.update_layout(title="Unemployment Rate Change",
-                      xaxis_title="Year",
-                      yaxis_title="Unemployment Rate",
-                      showlegend=False)
     return fig
 
-def make_slope_chart_housing(dff, year_1, year_2):
-    # Filter data for the two selected years
-    housing_1 = dff[dff["Year"] == year_1]["Housing Price"].values[0]
-    housing_2 = dff[dff["Year"] == year_2]["Housing Price"].values[0]
 
-    # Create a slope graph (just two points with a line)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[year_1, year_2],
-                             y=[housing_1, housing_2],
-                             mode='lines+markers+text',
-                             text=[f"{year_1}: {housing_1}", f"{year_2}: {housing_2}"],
-                             line=dict(color='green', width=3),
-                             marker=dict(size=10, color='green'),
-                             textposition="top center"))
-    fig.update_layout(title="Housing Price Change",
-                      xaxis_title="Year",
-                      yaxis_title="Housing Price",
-                      showlegend=False)
-    return fig
-
-def make_empty_chart():
-    # Placeholder chart when input is invalid or non-consecutive years
-    fig = go.Figure()
-    fig.update_layout(title="Please select two consecutive years.",
-                      xaxis_title="Year",
-                      yaxis_title="Value",
-                      showlegend=False)
-    return fig
 
 
 """
@@ -321,7 +284,7 @@ slider_card = dbc.Card(
     [
         html.H4("Select Year Range...", className="card-title"),
         dcc.RangeSlider(
-            id="year_range",
+            id="year_range_slider",
             marks={year: str(year) for year in range(MIN_YR, MAX_YR + 1)},
             min=MIN_YR,
             max=MAX_YR,
@@ -335,29 +298,23 @@ slider_card = dbc.Card(
     style={"margin-bottom": "10px"},
 )
 
-year_select_card = dbc.Card(
+indicator_dropdown_card = dbc.Card(
     dbc.CardBody(
         [
-            html.H4("Or select two years to compare", className="card-title"),
+            html.H4("Select Indicator", className="card-title"),
             dbc.Row(
                 [
                     dbc.Col(
                         dcc.Dropdown(
-                            id="year_dropdown_1",
-                            options=[{"label": str(year), "value": year} for year in range (2017, 2022)],
-                            value=2019,
+                            id="indicator_dropdown",
+                            options=[
+                                {'label': 'Median Housing Price', 'value': 'Median Housing Price'},
+                                {'label': 'Unemployment Rate', 'value': 'Unemployment Rate'},
+                                {'label': 'Average Gas Price', 'value': 'Average Gas Price'}
+                            ],
+                            value="Median Housing Price",
                             style={"width": "100%"},
                         ),
-                        width=6,
-                    ),
-                    dbc.Col(
-                        dcc.Dropdown(
-                            id="year_dropdown_2",
-                            options=[{"label": str(year), "value": year} for year in range(2017, 2023)],
-                            value=2021,
-                            style={"width": "100%"},
-                        ),
-                        width=6,
                     ),
                 ]
             )
@@ -366,15 +323,24 @@ year_select_card = dbc.Card(
     style={"width": "100%", "margin": "0 auto"}
 )
 
+results_card = dbc.Card(
+    [
+        dbc.CardHeader("Results"),
+        html.Div(results_table),
+    ],
+    className="mt-4",
+)
+
 # ========= Build tabs
 tabs = dbc.Tabs(
     [
         dbc.Tab(
-            [asset_allocation_card, slider_card, year_select_card],
+            [asset_allocation_card, slider_card, indicator_dropdown_card],
             id="tab-1",
             label="Play",
         ),
         dbc.Tab(
+            [results_card],
             id="tab-2",
             label="Results",
         )
@@ -389,7 +355,9 @@ tabs = dbc.Tabs(
 Main Layout
 """
 
-app.layout = dbc.Container(
+app.layout = (
+    dcc.Store("stored_data"),
+    dbc.Container(
     [
         dbc.Row(
             dbc.Col(
@@ -413,10 +381,25 @@ app.layout = dbc.Container(
                 dbc.Col(tabs, width=12, lg=5, className="mt-4 border"),
                 dbc.Col(
                     [
-                        dcc.Graph(id="line_chart_unemployment", className="mb-2"),
-                        dcc.Graph(id="line_chart_housing", className="mb-2"),
+                        dcc.Graph(id="line_chart", className="mb-2"),
+                        dcc.Graph(
+                            id="bar_graph",
+                            className="mb-2",
+                            style={
+                                'display': 'flex',
+                                'justify-content': 'center',
+                                'align-items': 'center',
+                                'width': '80%',
+                                'margin': 'auto',
+                            }
+                        ),
                         html.Hr(),
-                        html.H6(datasource_text, className="my-2")
+                        dcc.Store(id="change_statement_store"),
+                        html.Div([
+                            html.B(id="change_statement"),
+                            html.P("Note: There may have been fluctuations between these years.")
+                        ], className="change-statement-container"),
+                        html.Hr(),
                     ],
                     width=12,
                     lg=7,
@@ -428,7 +411,7 @@ app.layout = dbc.Container(
         dbc.Row(dbc.Col(footer)),
     ],
     fluid=True,
-)
+))
 
 
 
@@ -437,73 +420,180 @@ app.layout = dbc.Container(
 Callbacks
 """
 
+
 @app.callback(
-    [Output("line_chart_unemployment", "figure"),
-     Output("line_chart_housing", "figure")],
-    [Input("year_range", "value"),
-     Input("year_dropdown_1", "value"),
-     Input("year_dropdown_2", "value")],
+    Output("line_chart", "figure"),
+    [
+        Input("indicator_dropdown", "value"),
+        Input("year_range_slider", "value")
+    ]
 )
-def update_line_charts(selected_range, selected_year_1, selected_year_2):
-    ctx = callback_context  # Get context of what triggered callback
-    triggered_input = ctx.triggered[0]["prop_id"].split('.')[0] if ctx.triggered[0] else None
+def update_line_graph(selected_indicator, year_range):
+    df_filtered = df[(df["Year"] >= year_range[0]) & (df["Year"] <= year_range[1])]
 
-    # Case 1: If the year range slider is being used
-    if triggered_input == "year_range":
-        min_year, max_year = selected_range
-        filtered_df = df[(df["Year"] >= min_year) & (df["Year"] <= max_year)]
+    fig = go.Figure()
 
-        # Regular line charts for selected range
-        unemployment_fig = make_line_chart_unemployment(filtered_df)
-        housing_fig = make_line_chart_housing(filtered_df)
+    fig.add_trace(
+        go.Scatter(
+            x=df_filtered["Year"],
+            y=df_filtered["Median Household Income"],
+            name="Median Household Income",
+            marker_color=COLORS["Median Household Income"],
+            yaxis="y",
+        )
+    )
 
-    # Case 2: If the year dropdowns are being used
-    elif triggered_input in ["year_dropdown_1", "year_dropdown_2"]:
-        # Ensure the years selected are consecutive
-        if abs(selected_year_1 - selected_year_2) == 1:
-            # If the years are consecutive, generate a slope graph
-            if selected_year_1 > selected_year_2:
-                selected_year_1, selected_year_2 = selected_year_2, selected_year_1
+    fig.add_trace(
+        go.Scatter(
+            x=df_filtered["Year"],
+            y=df_filtered[selected_indicator],
+            name=selected_indicator,
+            marker_color=COLORS.get(selected_indicator),
+            yaxis="y2",
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial",
+                align="left",
+                namelength=-1
+            )
+        )
+    )
 
-            # Filter data for the two selected consecutive years
-            filtered_df = df[(df["Year"] == selected_year_1) | (df["Year"] == selected_year_2)]
+    indicator_ranges = {
+        "Median Housing Price": {"yaxis2": {"range": [350000, 650000], "tickprefix": "$"}},
+        "Unemployment Rate": {"yaxis2": {"range": [3.0, 9.0], "ticksuffix": "%"}},
+        "Average Gas Price": {"yaxis2": {"range": [2.00, 4.50], "tickprefix": "$", "tickformat": ".2f"}},
+    }
 
-            # Create slope charts for unemployment and housing with selected years
-            unemployment_fig = make_slope_chart_unemployment(filtered_df, selected_year_1, selected_year_2)
-            housing_fig = make_slope_chart_housing(filtered_df, selected_year_1, selected_year_2)
+    indicator_range = indicator_ranges[selected_indicator]
+
+    print(f"selected_indicator: {selected_indicator}")
+    print(f"indicator_range: {indicator_range}")
+
+    fig.update_layout(
+        title=f"Median Household Income vs. {selected_indicator} Trends ({year_range[0]} - {year_range[1]})",
+        template="none",
+        showlegend=True,
+        legend=dict(
+            x=0.5,
+            y=1.1,
+            xanchor="right",
+            yanchor="top",
+            orientation="h",
+        ),
+        height=400,
+        margin=dict(l=80, r=90, t=80, b=55),
+        yaxis=dict(
+            title="Median Household Income ($)",
+            tickprefix="$",
+            range=[75000, 87000],
+            title_standoff=10,
+        ),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="Arial",
+            align="left",
+            namelength=-1
+        ),
+        yaxis2=dict(
+            title=f"{selected_indicator}",
+            overlaying="y",
+            side="right",
+            fixedrange=True,
+            title_standoff=15,
+            range=indicator_range['yaxis2']['range'],
+            tickprefix=indicator_range['yaxis2'].get('tickprefix', ''),
+            ticksuffix=indicator_range['yaxis2'].get('ticksuffix', ''),
+            tickformat=indicator_range['yaxis2'].get('tickformat', ''),
+        ),
+        xaxis=dict(title="Years", fixedrange=True, dtick=1),
+        plot_bgcolor=COLORS["background"]
+    )
+
+    return fig
+
+
+@app.callback(
+    [
+        Output("bar_graph", "figure"),
+        Output("change_statement", "children")
+    ],
+    [
+        Input("indicator_dropdown", "value"),
+        Input("year_range_slider", "value")
+    ]
+)
+def update_bar_graph(selected_indicator, year_range):
+    df_filtered = df[(df["Year"] >= year_range[0]) & (df["Year"] <= year_range[1])]
+
+    start_value = df_filtered[df_filtered["Year"] == year_range[0]][selected_indicator].iloc[0]
+    end_value = df_filtered[df_filtered["Year"] == year_range[1]][selected_indicator].iloc[0]
+
+    fig = make_bar_graph(df, selected_indicator, year_range)
+
+    change = end_value - start_value
+    change_direction = "increased" if change > 0 else "decreased"
+    change_value = abs(change)
+
+    change_statement = (
+        f"From {year_range[0]} to {year_range[1]}, {selected_indicator.lower()} {change_direction} by ${change_value:,.0f}."
+        if selected_indicator == "Median Housing Price"
+        else f"From {year_range[0]} to {year_range[1]}, {selected_indicator.lower()} {change_direction} by {change_value:.1f}%."
+        if selected_indicator == "Unemployment Rate"
+        else f"From {year_range[0]} to {year_range[1]}, {selected_indicator.lower()} {change_direction} by ${change_value:,.2f}."
+        if selected_indicator == "Average Gas Price"
+        else f"From {year_range[0]} to {year_range[1]}, {selected_indicator.lower()} {change_direction} by ${change_value:,.2f}."
+    )
+
+    return fig, change_statement
+
+
+@app.callback(
+    Output("results_table", "data"),
+    Output("stored_data", "data"),
+    [Input("year_range_slider", "value"),
+     Input("indicator_dropdown", "value")],
+    [State("stored_data", "data")]
+)
+def update_results_table(selected_range, selected_indicator, stored_data):
+    min_year, max_year = selected_range
+    df_filtered = df[(df["Year"] >= min_year) & (df["Year"] <= max_year)]
+
+    start_value = df_filtered[df_filtered["Year"] == min_year][selected_indicator].values[0]
+    end_value = df_filtered[df_filtered["Year"] == max_year][selected_indicator].values[0]
+
+    change_value = end_value - start_value
+
+    new_data = df_filtered.to_dict("records")
+
+    for row in new_data:
+        # format Change column based on selected indicator
+        if selected_indicator == "Median Housing Price":
+            row["Change"] = f"${change_value:,.0f}"
+        elif selected_indicator == "Average Gas Price":
+            row["Change"] = f"${change_value:,.2f}"
+        elif selected_indicator == "Unemployment Rate":
+            row["Change"] = f"{change_value:.1f}%"
+            row["Unemployment Rate"] = f"{row['Unemployment Rate']:.1f}%"
         else:
-            # Handle non-consecutive year selection (optional)
-            unemployment_fig = make_empty_chart()  # Placeholder for invalid input
-            housing_fig = make_empty_chart()  # Placeholder for invalid input
+            row["Change"] = f"{change_value:,.2f}"
 
-    else:
-        # Default case when no input is given or undefined behavior
-        unemployment_fig = make_line_chart_unemployment(df)
-        housing_fig = make_line_chart_housing(df)
+        # always format Unemployment Rate as percentage, even if not the current indicator
+        if row["Unemployment Rate"] and selected_indicator != "Unemployment Rate":
+            row["Unemployment Rate"] = f"{row['Unemployment Rate']:.1f}%"
 
-    return unemployment_fig, housing_fig
+    if stored_data is None:
+        stored_data = []
 
+    combined_data = new_data + stored_data
 
-@app.callback(
-    Output("year_dropdown_2", "options"),
-    Output("year_dropdown_2", "value"),
-    Input("year_dropdown_1", "value"),
-)
-def update_dropdown_2_options(selected_year_1):
-    filtered_options = [{"label": str(year), "value": year} for year in range(selected_year_1 + 1, 2023)]
-
-    if filtered_options:
-        return filtered_options, filtered_options[0]["value"]
-    else:
-        return filtered_options, None
+    return combined_data, combined_data
 
 if __name__ == '__main__':
     app.run(debug=True)
 
-## TODO: update create fig methods (for slider & dropdown)
-## TODO: data tables in Results tab
-## TODO: README
-## TODO: data source
 
 
 
